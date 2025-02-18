@@ -5,14 +5,27 @@ from groq import Groq
 import os
 import re
 from dotenv import load_dotenv
+import boto3
 
 load_dotenv()
 
-
 #Gerando client key do Reddit
+SUBREDDIT = 'politics'
 client_id = os.environ.get('REDDIT_CLIENT_ID')
 client_secret = os.environ.get('REDDIT_CLIENT_KEY')
 user_agent = os.environ.get('REDDIT_USER_AGENT')
+
+
+#Create an S3 client
+s3 = boto3.client(
+    "s3",
+    aws_access_key_id = os.environ.get('AWS_ACCESS_KEY'),
+    aws_secret_access_key = os.environ.get('AWS_SECRET_ACCESS_KEY')
+)
+CSV_PATH = f'{SUBREDDIT}.csv'
+
+
+
 
 # Obtendo acess token
 def obter_reddit_acess_token(client_id, client_secret):
@@ -30,7 +43,7 @@ def get_hot_posts(subreddit, token):
         f"https://oauth.reddit.com/r/politics/hot",
         headers={
             "User-Agent": user_agent,
-            "Authorization": f"bearer {token}"
+            "Authorization": f"bearer { token}"
         }
     )
     return posts_requests.json()
@@ -60,7 +73,7 @@ client = Groq(
 
 
 # Classificar o sentimento
-def classificar_sentimento(texto):
+def classificar_posicionamento(texto):
     resposta = client.chat.completions.create(
     
     messages=[
@@ -85,9 +98,21 @@ def classificar_sentimento(texto):
     return resposta_limpa.strip()
 
 # Juntando tudo
+print('Obtendo Access Token')
 token = obter_reddit_acess_token(client_id, client_secret)
-posts = get_hot_posts("python", token)
+
+print('Obtendo hot posts')
+posts = get_hot_posts(SUBREDDIT, token)
 df_posts = create_post_df(posts)
 texto = ('Esquerda', "Direita", "Centro")
-df_posts["sentimento"] = df_posts["title"].apply(classificar_sentimento)
-df_posts.to_csv('posts.csv', index = False)
+
+# Classificando o posicionamento dos posts
+df_posts["posicionamento"] = df_posts["title"].apply(classificar_posicionamento)
+
+print(f'Salvando {CSV_PATH}')
+df_posts.to_csv(CSV_PATH, index = False)
+
+#Escrevendo no S3
+bucket_name = os.environ.get("AWS_S3_BUCKET_NAME")
+object_name = CSV_PATH
+s3.upload_file(CSV_PATH, bucket_name, f'subreddits/{CSV_PATH}')
